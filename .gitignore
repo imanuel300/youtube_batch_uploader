@@ -6,6 +6,8 @@ token.pickle
 *.log
 logs/
 
+# Downloads
+downloads/
 # Python
 __pycache__/
 *.py[cod]
