@@ -225,9 +225,14 @@ def main():
                 )
                 
                 if response:
+                    video_id = response.get("id") if isinstance(response, dict) else None
+                    if video_id:
+                        youtube_url = f"https://youtu.be/{video_id}"
+                        df.at[idx, "youtube_url"] = youtube_url
+                        logger.info(f"🔗 נשמר קישור: {youtube_url}")
                     df.at[idx, "uploaded"] = "yes"
                     df.to_csv(CSV_FILE, index=False)
-                    logger.info("📌 סומן כ-uploaded ✅")
+                    logger.info("📌 סומן כ-uploaded ✅ ונשמר לקובץ CSV")
                 else:
                     logger.error("❌ ההעלאה נכשלה")
                     
