@@ -17,6 +17,8 @@ CSV_FILE = "videos.csv"
 DOWNLOAD_FOLDER = "downloads"
 LOG_FILE = "upload_log.log"
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+BASE_STORAGE_URL = "https://storage101.lon3.clouddrive.com/v1/MossoCloudFS_359702fa-5130-4cf4-9e74-778f0ddc61ed/ateretMordecay"
+BASE_WEBSITE_URL = "https://www.ateretmordechai.org/%D7%90%D7%A8%D7%9B%D7%99%D7%95%D7%9F-%D7%A9%D7%99%D7%A2%D7%95%D7%A8%D7%99%D7%9D?view=media&id="
 
 # Setup logging
 logging.basicConfig(
@@ -188,16 +190,38 @@ def main():
         for idx, row in df.iterrows():
             # Skip if already uploaded
             if str(row.get("uploaded", "")).lower() == "yes":
-                logger.info(f"⏭️ דילוג על שורה {idx + 1}: כבר הועלה - {row.get('title', 'N/A')}")
+                title_text = str(row.get("title", "N/A")).strip()
+                logger.info(f"⏭️ דילוג על שורה {idx + 1}: כבר הועלה - {title_text}")
                 continue
 
+            # Build title: rabi + cat + title
+            rabi = str(row.get("rabi", "")).strip()
+            cat = str(row.get("cat", "")).strip()
+            title = str(row.get("title", "")).strip()
+            video_title = f"{rabi} - {cat} - {title}" if rabi and cat else (f"{cat} - {title}" if cat else title)
+            
             logger.info(f"\n{'=' * 60}")
-            logger.info(f"📹 מעבד שורה {idx + 1}/{len(df)}: {row.get('title', 'N/A')}")
+            logger.info(f"📹 מעבד שורה {idx + 1}/{len(df)}: {video_title}")
             logger.info(f"{'=' * 60}")
 
-            url = row["file_url"]
-            parsed = urllib.parse.urlparse(url)
+            # Build full URL
+            url_path = str(row.get("url", "")).strip()
+            if not url_path.startswith("http"):
+                # Add base URL if not already a full URL
+                if url_path.startswith("/"):
+                    full_url = BASE_STORAGE_URL + url_path
+                else:
+                    full_url = BASE_STORAGE_URL + "/" + url_path
+            else:
+                full_url = url_path
+            
+            logger.info(f"🔗 URL מלא: {full_url}")
+            
+            parsed = urllib.parse.urlparse(full_url)
             file_name = os.path.basename(parsed.path)  # filename only without ?params
+            # Remove query parameters from filename
+            if "?" in file_name:
+                file_name = file_name.split("?")[0]
             local_file = os.path.join(DOWNLOAD_FOLDER, file_name)
 
             # Check if file already exists
@@ -208,31 +232,51 @@ def main():
             else:
                 # Download file
                 try:
-                    download_file(url, local_file)
+                    download_file(full_url, local_file)
                 except Exception as e:
                     logger.error(f"❌ שגיאה בהורדה: {str(e)}")
                     logger.error(f"⏭️ דילוג על שורה {idx + 1}")
                     continue
+
+            # Build description
+            csv_id = str(row.get("id", "")).strip()
+            added_date = str(row.get("added", "")).strip()
+            website_link = BASE_WEBSITE_URL + csv_id if csv_id else ""
+            
+            description = "דפי מקורות וקובץ שמע בעמוד השיעור באתר הישיבה"
+            if website_link:
+                description += f"\n\n{website_link}"
+            if added_date:
+                description += f"\n\nתאריך: {added_date}"
 
             # Upload to YouTube
             try:
                 response = resumable_upload(
                     youtube,
                     local_file,
-                    row["title"],
-                    row.get("description", ""),
-                    row.get("tags", "")
+                    video_title,
+                    description,
+                    ""  # No tags field in new CSV format
                 )
                 
                 if response:
-                    video_id = response.get("id") if isinstance(response, dict) else None
-                    if video_id:
-                        youtube_url = f"https://youtu.be/{video_id}"
+                    youtube_video_id = response.get("id") if isinstance(response, dict) else None
+                    if youtube_video_id:
+                        youtube_url = f"https://youtu.be/{youtube_video_id}"
                         df.at[idx, "youtube_url"] = youtube_url
                         logger.info(f"🔗 נשמר קישור: {youtube_url}")
                     df.at[idx, "uploaded"] = "yes"
                     df.to_csv(CSV_FILE, index=False)
                     logger.info("📌 סומן כ-uploaded ✅ ונשמר לקובץ CSV")
+                    
+                    # Delete file after successful upload
+                    try:
+                        if os.path.exists(local_file):
+                            file_size = os.path.getsize(local_file)
+                            os.remove(local_file)
+                            logger.info(f"🗑️ קובץ נמחק: {local_file} ({file_size / (1024*1024):.2f} MB)")
+                    except Exception as e:
+                        logger.warning(f"⚠️ לא הצלחתי למחוק את הקובץ {local_file}: {str(e)}")
                 else:
                     logger.error("❌ ההעלאה נכשלה")
                     
