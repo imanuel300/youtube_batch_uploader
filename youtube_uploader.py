@@ -40,6 +40,7 @@ def authenticate_youtube():
         with open("token.pickle", "rb") as token:
             creds = pickle.load(token)
         logger.info("✅ טוקן נמצא ונטען")
+        logger.info("💡 אם אתה רוצה להתחבר לפרויקט חדש, מחק את קובץ token.pickle")
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -47,10 +48,22 @@ def authenticate_youtube():
             creds.refresh(Request())
         else:
             logger.info("🌐 מבקש הרשאות חדשות...")
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", SCOPES
-            )
-            creds = flow.run_local_server(port=0)
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    "credentials.json", SCOPES
+                )
+                creds = flow.run_local_server(port=0)
+            except Exception as e:
+                if "access_denied" in str(e) or "403" in str(e):
+                    logger.error("❌ שגיאת 403: access_denied")
+                    logger.error("=" * 60)
+                    logger.error("האפליקציה במצב Testing. כדי לפתור:")
+                    logger.error("1. היכנס ל-Google Cloud Console")
+                    logger.error("2. לך ל-APIs & Services > OAuth consent screen")
+                    logger.error("3. הוסף את עצמך ל-Test users")
+                    logger.error("4. מחק את token.pickle והפעל מחדש")
+                    logger.error("=" * 60)
+                raise
         with open("token.pickle", "wb") as token:
             pickle.dump(creds, token)
         logger.info("✅ אימות הושלם בהצלחה")
@@ -179,6 +192,11 @@ def main():
         youtube = authenticate_youtube()
         df = pd.read_csv(CSV_FILE)
         
+        # Ensure 'uploaded' column exists and fill NaN values with empty string
+        if "uploaded" not in df.columns:
+            df["uploaded"] = ""
+        df["uploaded"] = df["uploaded"].fillna("").astype(str)
+        
         logger.info(f"📊 נמצאו {len(df)} שורות בקובץ CSV")
         
         uploaded_count = len(df[df["uploaded"].str.lower() == "yes"])
@@ -241,11 +259,17 @@ def main():
             # Build description
             csv_id = str(row.get("id", "")).strip()
             added_date = str(row.get("added", "")).strip()
+            
+            # Remove " 0:00" from date if exists
+            if added_date and " 0:00" in added_date:
+                added_date = added_date.replace(" 0:00", "")
+            
             website_link = BASE_WEBSITE_URL + csv_id if csv_id else ""
             
             description = "דפי מקורות וקובץ שמע בעמוד השיעור באתר הישיבה"
             if website_link:
-                description += f"\n\n{website_link}"
+                # Create clickable HTML link
+                description += f"\n\n<a href=\"{website_link}\">{website_link}</a>"
             if added_date:
                 description += f"\n\nתאריך: {added_date}"
 

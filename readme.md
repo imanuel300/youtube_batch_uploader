@@ -30,6 +30,22 @@ pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 p
 
 ⚠️ **חשוב**: קובץ `credentials.json` לא יועלה ל-Git (מופיע ב-.gitignore)
 
+### 🔐 פתרון שגיאת 403: access_denied
+
+אם אתה מקבל שגיאה **"403: access_denied"** או **"האפליקציה נמצאת בבדיקה"**, זה אומר שהאפליקציה במצב Testing ויש להוסיף את עצמך לרשימת המשתמשים המאושרים:
+
+1. היכנס ל-[Google Cloud Console](https://console.cloud.google.com/)
+2. בחר את הפרויקט שלך
+3. לך ל-**APIs & Services** > **OAuth consent screen**
+4. גלול למטה לחלק **Test users**
+5. לחץ על **+ ADD USERS**
+6. הוסף את כתובת ה-Gmail שלך (זו שתשתמש בה להתחברות)
+7. לחץ **SAVE**
+8. מחק את קובץ `token.pickle` מהתיקייה (אם קיים)
+9. הפעל את הסקריפט מחדש - עכשיו תוכל להתחבר
+
+**אלטרנטיבה**: אם אתה רוצה שכל אחד יוכל להשתמש באפליקציה, תוכל לפרסם אותה (דורש אימות נוסף מ-Google).
+
 ## 📁 מבנה הקובץ CSV
 
 קובץ `videos.csv` צריך להכיל את העמודות הבאות:
@@ -69,6 +85,22 @@ python youtube_uploader.py
 3. מעלה כל קובץ ליוטיוב
 4. מעדכן את הקובץ CSV עם סטטוס `uploaded = yes`
 5. שומר לוגים בקובץ `upload_log.log`
+
+### 🔄 החלפת פרויקט Google
+
+אם שינית את שם הפרויקט ב-Google Cloud Console או רוצה להתחבר לפרויקט אחר:
+
+1. **מחק את קובץ `token.pickle`** - קובץ זה מכיל את הטוקן מהפרויקט הישן
+2. ודא שיש לך קובץ `credentials.json` חדש מהפרויקט החדש
+3. הפעל את הסקריפט מחדש - הוא יבקש הרשאות חדשות עם הפרויקט החדש
+
+```bash
+# ב-Windows PowerShell:
+Remove-Item token.pickle
+
+# או ב-Command Prompt:
+del token.pickle
+```
 
 ## 📝 קבצים וקבצים
 
