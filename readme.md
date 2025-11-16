@@ -110,6 +110,7 @@ del token.pickle
 - `upload_log.log` - קובץ לוגים מפורט
 - `credentials.json` - קובץ הרשאות Google (לא ב-Git)
 - `token.pickle` - טוקן אימות (לא ב-Git)
+- `cleanup_remote_files.py` - סקריפט למחיקת קבצים מהשרת לאחר שהועלו ליוטיוב
 
 ## 🔒 אבטחה
 
@@ -125,6 +126,21 @@ del token.pickle
 
 ### מחיקת קבצים אוטומטית
 לאחר העלאה מוצלחת ליוטיוב, הקובץ נמחק אוטומטית מתיקיית `downloads/` כדי לחסוך מקום בדיסק. הקובץ נמחק רק לאחר שההעלאה הושלמה בהצלחה והנתונים נשמרו ב-CSV.
+
+### ניקוי קבצים מהשרת (Rackspace Cloud Files)
+לאחר שהסרטון הועלה ליוטיוב (`uploaded = yes` ו-`youtube_url` לא ריק), ניתן להריץ את `cleanup_remote_files.py` כדי למחוק את הקובץ גם מהשרת המרוחק. הסקריפט:
+
+- מתחבר אוטומטית ל-Rackspace Cloud Files (UK) עם המפתחות המוגדרים בקובץ
+- מוחק כל קובץ מרוחק ששייך לסרטון שהועלה
+- מעדכן עמודה חדשה `remote_deleted` ב-CSV עם `yes` כאשר המחיקה הצליחה (או הודעת שגיאה במקרה הצורך)
+
+הרצה:
+
+```bash
+python cleanup_remote_files.py
+```
+
+חשוב להריץ את הסקריפט רק לאחר שהעלאות הושלמו בהצלחה, שכן הוא מוחק את המקור המרוחק לצמיתות.
 
 ### לוגים
 כל הפעולות נשמרות בקובץ `upload_log.log` עם חותמת זמן מפורטת.

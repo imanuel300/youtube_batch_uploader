@@ -6,6 +6,10 @@ import pickle
 import urllib.parse
 import logging
 import time
+import hmac
+import hashlib
+from datetime import datetime, timezone
+import re  # ניקוי כותרות
 
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -17,8 +21,16 @@ CSV_FILE = "videos.csv"
 DOWNLOAD_FOLDER = "downloads"
 LOG_FILE = "upload_log.log"
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
-BASE_STORAGE_URL = "https://storage101.lon3.clouddrive.com/v1/MossoCloudFS_359702fa-5130-4cf4-9e74-778f0ddc61ed/ateretMordecay"
-BASE_WEBSITE_URL = "https://www.ateretmordechai.org/%D7%90%D7%A8%D7%9B%D7%99%D7%95%D7%9F-%D7%A9%D7%99%D7%A2%D7%95%D7%A8%D7%99%D7%9D?view=media&id="
+
+# Storage configuration
+STORAGE_BASE = "https://storage101.lon3.clouddrive.com"
+STORAGE_PATH_BASE = ""
+STORAGE_KEY = ""
+STORAGE_EXPIRES_SECONDS = 5700  # 5700 seconds = ~95 minutes
+
+BASE_WEBSITE_URL = ""
+# Endpoint on site to update DB provider field (GET)
+UPDATE_PROVIDER_ENDPOINT = ""
 
 # Setup logging
 logging.basicConfig(
@@ -30,6 +42,66 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+MAX_TITLE_LENGTH = 100
+
+
+def generate_storage_url(video_path):
+    """
+    Generate a signed temporary URL for video download.
+    Based on PHP code: calculates HMAC SHA1 signature with expiration.
+    
+    Args:
+        video_path: Relative path to video file (e.g., "/BIS/Achila/video.mp4")
+    
+    Returns:
+        Full signed URL with signature and expiration
+    """
+    method = 'GET'
+    
+    # Get current UTC timestamp and add expiration time
+    expires = int(datetime.now(timezone.utc).timestamp()) + STORAGE_EXPIRES_SECONDS
+    
+    # Build full path
+    if video_path.startswith("/"):
+        full_path = STORAGE_PATH_BASE + video_path
+    else:
+        full_path = STORAGE_PATH_BASE + "/" + video_path
+    
+    # Create HMAC data string (method, expires, path)
+    hmac_data = f"{method}\n{expires}\n{full_path}"
+    
+    # Calculate HMAC SHA1 signature
+    signature = hmac.new(
+        STORAGE_KEY.encode('utf-8'),
+        hmac_data.encode('utf-8'),
+        hashlib.sha1
+    ).hexdigest()
+    
+    # Build final URL
+    temp_url = f"{STORAGE_BASE}{full_path}?temp_url_sig={signature}&temp_url_expires={expires}"
+    
+    return temp_url
+
+
+def notify_site_update_provider(csv_id: str, youtube_url: str) -> bool:
+    try:
+        if not csv_id or not youtube_url:
+            return False
+        params = {
+            "id": csv_id,
+            "youtube_url": youtube_url,
+        }
+        resp = requests.get(UPDATE_PROVIDER_ENDPOINT, params=params, timeout=15)
+        if resp.status_code == 200:
+            logger.info("🛰️ עודכן provider באתר עבור id=%s", csv_id)
+            return True
+        else:
+            logger.warning("⚠️ עדכון provider נכשל (HTTP %s): %s", resp.status_code, resp.text[:300])
+            return False
+    except Exception as e:
+        logger.warning("⚠️ כשל בעדכון provider באתר: %s", str(e))
+        return False
 
 
 def authenticate_youtube():
@@ -191,6 +263,13 @@ def main():
     try:
         youtube = authenticate_youtube()
         df = pd.read_csv(CSV_FILE)
+        # Ensure tracking columns exist
+        if "uploaded" not in df.columns:
+            df["uploaded"] = ""
+        df["uploaded"] = df["uploaded"].fillna("").astype(str)
+        if "provider_updated" not in df.columns:
+            df["provider_updated"] = ""
+        df["provider_updated"] = df["provider_updated"].fillna("").astype(str)
         
         # Ensure 'uploaded' column exists and fill NaN values with empty string
         if "uploaded" not in df.columns:
@@ -216,24 +295,44 @@ def main():
             rabi = str(row.get("rabi", "")).strip()
             cat = str(row.get("cat", "")).strip()
             title = str(row.get("title", "")).strip()
+            # הגנה - אם title ריק נסה לפחות cat/rabi או שנהג title גנרי
+            if not title and (rabi or cat):
+                title = f"{cat or rabi}"
             video_title = f"{rabi} - {cat} - {title}" if rabi and cat else (f"{cat} - {title}" if cat else title)
+            # ודא שהכותרת לא ריקה
+            if not video_title or not video_title.strip():
+                logger.warning(f"שורה {idx + 1}: לא נמצאה כותרת תקינה! דילוג")
+                continue
+            
+            # ניקוי תווים אסורים בכותרת
+            video_title = re.sub(r"[^\w\s\u0590-\u05fe\-\.,;:!?()\"'’״׳]", "", video_title)
+            video_title = video_title.replace('\n', ' ').replace('\r', ' ')
+            logger.debug(f"שורה {idx+1}, כותרת לשידור לאחר ניקוי: >>{video_title}<<")
+            if not video_title or not video_title.strip():
+                logger.warning(f"שורה {idx + 1}: לא נמצאה כותרת תקינה גם אחרי ניקוי! דילוג")
+                continue
+            
+            # בדיקת אורך כותרת
+            if len(video_title) > MAX_TITLE_LENGTH:
+                logger.warning(f"שורה {idx + 1}: הכותרת ארוכה מדי ({len(video_title)} תווים). מקצץ ל-100 התווים האחרונים.")
+                logger.warning(f"כותרת מקורית: {video_title}")
+                video_title = video_title[-MAX_TITLE_LENGTH:]  # לוקח את 100 התווים האחרונים
+                logger.warning(f"כותרת לאחר קיצוץ: {video_title}")
             
             logger.info(f"\n{'=' * 60}")
             logger.info(f"📹 מעבד שורה {idx + 1}/{len(df)}: {video_title}")
             logger.info(f"{'=' * 60}")
 
-            # Build full URL
+            # Build full URL with dynamic signature
             url_path = str(row.get("url", "")).strip()
             if not url_path.startswith("http"):
-                # Add base URL if not already a full URL
-                if url_path.startswith("/"):
-                    full_url = BASE_STORAGE_URL + url_path
-                else:
-                    full_url = BASE_STORAGE_URL + "/" + url_path
+                # Generate signed URL
+                full_url = generate_storage_url(url_path)
+                logger.info(f"🔗 URL מלא (חתום): {full_url}")
             else:
+                # Already a full URL, use as is
                 full_url = url_path
-            
-            logger.info(f"🔗 URL מלא: {full_url}")
+                logger.info(f"🔗 URL מלא: {full_url}")
             
             parsed = urllib.parse.urlparse(full_url)
             file_name = os.path.basename(parsed.path)  # filename only without ?params
@@ -252,7 +351,12 @@ def main():
                 try:
                     download_file(full_url, local_file)
                 except Exception as e:
-                    logger.error(f"❌ שגיאה בהורדה: {str(e)}")
+                    err_msg = str(e)
+                    logger.error(f"❌ שגיאה בהורדה: {err_msg}")
+                    if "Client Error: Not Found for url" in err_msg:
+                        df.at[idx, "uploaded"] = "Not url"
+                        df.to_csv(CSV_FILE, index=False)
+                        logger.info(f"✅ נשמר בקובץ CSV עם 'Not url' בעמודת uploaded עבור שורה {idx+1}")
                     logger.error(f"⏭️ דילוג על שורה {idx + 1}")
                     continue
 
@@ -263,13 +367,14 @@ def main():
             # Remove " 0:00" from date if exists
             if added_date and " 0:00" in added_date:
                 added_date = added_date.replace(" 0:00", "")
+                date_obj = datetime.strptime(added_date, "%m/%d/%Y")
+                added_date = date_obj.strftime("%d/%m/%Y")
             
             website_link = BASE_WEBSITE_URL + csv_id if csv_id else ""
             
             description = "דפי מקורות וקובץ שמע בעמוד השיעור באתר הישיבה"
             if website_link:
-                # Create clickable HTML link
-                description += f"\n\n<a href=\"{website_link}\">{website_link}</a>"
+                description += f"\n\nקישור לשיעור באתר הישיבה:\n{website_link}"
             if added_date:
                 description += f"\n\nתאריך: {added_date}"
 
@@ -286,9 +391,12 @@ def main():
                 if response:
                     youtube_video_id = response.get("id") if isinstance(response, dict) else None
                     if youtube_video_id:
-                        youtube_url = f"https://youtu.be/{youtube_video_id}"
+                        youtube_url = f"https://www.youtube.com/watch?v={youtube_video_id}"
                         df.at[idx, "youtube_url"] = youtube_url
                         logger.info(f"🔗 נשמר קישור: {youtube_url}")
+                        # Notify site to update provider in DB and mark in CSV
+                        notified = notify_site_update_provider(csv_id, youtube_url)
+                        df.at[idx, "provider_updated"] = "yes" if notified else "error"
                     df.at[idx, "uploaded"] = "yes"
                     df.to_csv(CSV_FILE, index=False)
                     logger.info("📌 סומן כ-uploaded ✅ ונשמר לקובץ CSV")
